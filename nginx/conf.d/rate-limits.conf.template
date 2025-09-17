@@ -1,0 +1,16 @@
+# Rate limiting configuration - generated from environment variables
+
+# General rate limiting zone
+limit_req_zone $binary_remote_addr zone=general:${RATE_LIMIT_GENERAL_MEMORY:-10m} rate=${RATE_LIMIT_GENERAL_RATE:-10r/s};
+
+# Login/authentication rate limiting zone  
+limit_req_zone $binary_remote_addr zone=login:${RATE_LIMIT_LOGIN_MEMORY:-10m} rate=${RATE_LIMIT_LOGIN_RATE:-5r/m};
+
+# API rate limiting zone
+limit_req_zone $binary_remote_addr zone=api:${RATE_LIMIT_API_MEMORY:-10m} rate=${RATE_LIMIT_API_RATE:-50r/s};
+
+# WebSocket connection rate limiting zone
+limit_req_zone $binary_remote_addr zone=websocket:${RATE_LIMIT_WEBSOCKET_MEMORY:-10m} rate=${RATE_LIMIT_WEBSOCKET_RATE:-5r/s};
+
+# Upload rate limiting zone
+limit_req_zone $binary_remote_addr zone=upload:${RATE_LIMIT_UPLOAD_MEMORY:-10m} rate=${RATE_LIMIT_UPLOAD_RATE:-2r/s};

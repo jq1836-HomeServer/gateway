@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: nginx-gateway
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Extract release version
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "major_minor=$(echo $VERSION | sed 's/\.[^.]*$//')" >> $GITHUB_OUTPUT
+
+    - name: Build and push release image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        platforms: linux/amd64,linux/arm64,linux/arm/v7
+        push: true
+        tags: |
+          ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major_minor }}
+          ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+        labels: |
+          org.opencontainers.image.title=Nginx Reverse Proxy Gateway
+          org.opencontainers.image.description=HTTPS-to-HTTP reverse proxy with configurable rate limiting
+          org.opencontainers.image.version=${{ steps.version.outputs.version }}
+          org.opencontainers.image.vendor=${{ github.repository_owner }}
+          org.opencontainers.image.licenses=MIT
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Update release with Docker image info
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const release = await github.rest.repos.getRelease({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            release_id: context.payload.release.id
+          });
+
+          const dockerInfo = `
+
+          ## 🐳 Docker Image
+
+          This release is available as a Docker image:
+
+          \`\`\`bash
+          # Pull the image
+          docker pull ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+
+          # Run the container
+          docker run -d \\
+            --name nginx-gateway \\
+            -p 80:80 -p 443:443 \\
+            -e DOMAIN=your-domain.com \\
+            -e INTERNAL_MAIN_HOST=your-app-host \\
+            -e INTERNAL_MAIN_PORT=8000 \\
+            ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          \`\`\`
+
+          **Available tags:**
+          - \`${{ steps.version.outputs.version }}\` (this release)
+          - \`${{ steps.version.outputs.major_minor }}\` (major.minor)
+          - \`latest\` (latest release)
+
+          **Supported platforms:**
+          - linux/amd64
+          - linux/arm64
+          - linux/arm/v7
+          `;
+
+          await github.rest.repos.updateRelease({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            release_id: context.payload.release.id,
+            body: release.data.body + dockerInfo
+          });

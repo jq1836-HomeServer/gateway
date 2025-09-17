@@ -1,0 +1,125 @@
+name: Security and Maintenance
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: nginx-gateway
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Build Docker image for scanning
+      run: |
+        docker build -t ${{ env.IMAGE_NAME }}:scan .
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: '${{ env.IMAGE_NAME }}:scan'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Run Hadolint (Dockerfile linting)
+      uses: hadolint/hadolint-action@v3.1.0
+      with:
+        dockerfile: Dockerfile
+        format: sarif
+        output-file: hadolint-results.sarif
+
+    - name: Upload Hadolint scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: hadolint-results.sarif
+
+  dependency-review:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Dependency Review
+      uses: actions/dependency-review-action@v3
+
+  update-base-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Check for nginx updates
+      id: check-updates
+      run: |
+        CURRENT_TAG=$(grep "FROM nginx:" Dockerfile | head -1 | cut -d: -f2 | cut -d' ' -f1)
+        LATEST_TAG=$(curl -s "https://registry.hub.docker.com/v2/repositories/library/nginx/tags/?page_size=100" | jq -r '.results[] | select(.name | test("^[0-9]+\\.[0-9]+.*-alpine$")) | .name' | head -1)
+        
+        echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
+        echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+        
+        if [ "$CURRENT_TAG" != "$LATEST_TAG" ]; then
+          echo "needs_update=true" >> $GITHUB_OUTPUT
+          echo "📦 Update available: $CURRENT_TAG → $LATEST_TAG"
+        else
+          echo "needs_update=false" >> $GITHUB_OUTPUT
+          echo "✅ Base image is up to date: $CURRENT_TAG"
+        fi
+
+    - name: Update Dockerfile
+      if: steps.check-updates.outputs.needs_update == 'true'
+      run: |
+        sed -i "s/FROM nginx:${{ steps.check-updates.outputs.current_tag }}/FROM nginx:${{ steps.check-updates.outputs.latest_tag }}/g" Dockerfile
+
+    - name: Create Pull Request
+      if: steps.check-updates.outputs.needs_update == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: |
+          chore: update nginx base image to ${{ steps.check-updates.outputs.latest_tag }}
+          
+          - Updated FROM nginx:${{ steps.check-updates.outputs.current_tag }} to nginx:${{ steps.check-updates.outputs.latest_tag }}
+          - This is an automated update to keep the base image current
+        title: 'chore: update nginx base image to ${{ steps.check-updates.outputs.latest_tag }}'
+        body: |
+          ## 📦 Base Image Update
+
+          This PR updates the nginx base image from `${{ steps.check-updates.outputs.current_tag }}` to `${{ steps.check-updates.outputs.latest_tag }}`.
+
+          ### Changes
+          - Updated `FROM` directive in Dockerfile
+          - No breaking changes expected
+
+          ### Testing
+          - [ ] Verify the build completes successfully
+          - [ ] Test basic functionality
+          - [ ] Check for any security improvements
+
+          This is an automated update created by the security and maintenance workflow.
+        branch: update/nginx-${{ steps.check-updates.outputs.latest_tag }}
+        delete-branch: true
+        labels: |
+          dependencies
+          automated
+          security

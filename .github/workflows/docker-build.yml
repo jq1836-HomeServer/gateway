@@ -1,0 +1,115 @@
+name: Build and Push Docker Image
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Custom tag for the image'
+        required: false
+        default: 'latest'
+      push_to_registry:
+        description: 'Push to registry'
+        required: false
+        default: 'true'
+        type: boolean
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: nginx-gateway
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+        labels: |
+          org.opencontainers.image.title=Nginx Reverse Proxy Gateway
+          org.opencontainers.image.description=HTTPS-to-HTTP reverse proxy with configurable rate limiting
+          org.opencontainers.image.vendor=${{ github.repository_owner }}
+          org.opencontainers.image.licenses=MIT
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' && (github.event.inputs.push_to_registry != 'false') }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+          REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+
+    - name: Test Docker image
+      if: steps.meta.outputs.tags
+      run: |
+        # Test that the image can start successfully
+        docker run --rm -d --name test-nginx \
+          -e DOMAIN=test.example.com \
+          -e INTERNAL_MAIN_HOST=localhost \
+          -e INTERNAL_MAIN_PORT=8000 \
+          ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+        
+        # Wait for container to be ready
+        sleep 10
+        
+        # Check if container is running
+        if ! docker ps | grep test-nginx; then
+          echo "Container failed to start"
+          docker logs test-nginx
+          exit 1
+        fi
+        
+        # Test health check endpoint
+        if ! docker exec test-nginx /usr/local/bin/healthcheck.sh; then
+          echo "Health check failed"
+          docker logs test-nginx
+          exit 1
+        fi
+        
+        # Cleanup
+        docker stop test-nginx
+        
+        echo "✅ Docker image test passed!"
+
+    - name: Update Docker Hub description
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      uses: peter-evans/dockerhub-description@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        repository: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+        readme-filepath: ./README.md

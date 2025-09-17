@@ -1,0 +1,63 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# SSL certificates and keys
+ssl/
+*.pem
+*.key
+*.crt
+*.csr
+
+# Docker
+docker-compose.yml
+docker-compose.override.yml
+.docker/
+
+# Build artifacts
+build/
+dist/
+out/
+
+# Logs
+*.log
+logs/
+nginx_access.log
+nginx_error.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+*.tmp
+*.temp
+~$*
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Test coverage
+coverage/
+*.cover
+htmlcov/
+
+# Temporary files
+tmp/
+temp/
+*.pid
