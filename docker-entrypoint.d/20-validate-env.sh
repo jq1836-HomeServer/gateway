@@ -17,6 +17,7 @@ done
 validate_rate() {
     local rate=$1
     local name=$2
+    echo "Checking rate limiting variable $name: '$rate'"
     if [ -n "$rate" ] && ! echo "$rate" | grep -qE '^[0-9]+r/[smh]$'; then
         echo "ERROR: Invalid rate format for $name: $rate (expected format: NUMBERr/s|m|h)"
         exit 1

@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+echo "SSL generation script starting..."
+
 # Only generate certificates if they don't exist
 if [ ! -f "${SSL_CERT_PATH:-/etc/nginx/ssl/server.crt}" ] || [ ! -f "${SSL_KEY_PATH:-/etc/nginx/ssl/server.key}" ]; then
     echo "SSL certificates not found, generating self-signed certificates..."
@@ -9,6 +11,10 @@ if [ ! -f "${SSL_CERT_PATH:-/etc/nginx/ssl/server.crt}" ] || [ ! -f "${SSL_KEY_P
     CERT_PATH=${SSL_CERT_PATH:-/etc/nginx/ssl/server.crt}
     KEY_PATH=${SSL_KEY_PATH:-/etc/nginx/ssl/server.key}
     DOMAIN_NAME=${DOMAIN:-localhost}
+    
+    echo "Certificate path: $CERT_PATH"
+    echo "Key path: $KEY_PATH" 
+    echo "Domain: $DOMAIN_NAME"
     
     # Create SSL directory if it doesn't exist
     mkdir -p "$(dirname "$CERT_PATH")"

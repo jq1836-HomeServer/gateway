@@ -84,45 +84,76 @@ jobs:
         IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
         echo "Testing image: $IMAGE_TAG"
         
+        # First, test if the image can run a simple command
+        echo "Testing basic image functionality..."
+        if ! docker run --rm "$IMAGE_TAG" sh -c "echo 'Image can execute commands'"; then
+          echo "❌ Image cannot execute basic commands"
+          exit 1
+        fi
+        
         # Test that the image can start successfully
         echo "Starting container..."
         CONTAINER_ID=$(docker run -d --name test-nginx \
           -e DOMAIN=test.example.com \
           -e INTERNAL_MAIN_HOST=httpbin.org \
           -e INTERNAL_MAIN_PORT=80 \
+          -e RATE_LIMIT_GENERAL_RATE=10r/s \
+          -e RATE_LIMIT_API_RATE=50r/s \
+          -e RATE_LIMIT_LOGIN_RATE=5r/m \
           "$IMAGE_TAG")
         
         echo "Container ID: $CONTAINER_ID"
         
-        # Wait for container to be ready (healthcheck needs time)
-        echo "Waiting for container to start..."
-        sleep 5
+        # Immediately check if container started
+        sleep 2
+        CONTAINER_EXISTS=$(docker ps -a --filter name=test-nginx --format "{{.Names}}" | head -n1)
+        if [ "$CONTAINER_EXISTS" != "test-nginx" ]; then
+          echo "❌ Container was not created or was immediately removed"
+          exit 1
+        fi
         
         # Check if container started and get status
         CONTAINER_STATUS=$(docker inspect test-nginx --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
-        echo "Container status: $CONTAINER_STATUS"
+        echo "Initial container status: $CONTAINER_STATUS"
         
-        # If container exited, show logs and exit
-        if [ "$CONTAINER_STATUS" = "exited" ] || [ "$CONTAINER_STATUS" = "not_found" ]; then
-          echo "❌ Container failed to start or exited early"
+        # If container exited immediately, show logs and exit
+        if [ "$CONTAINER_STATUS" = "exited" ]; then
+          echo "❌ Container exited immediately"
+          echo "Exit code: $(docker inspect test-nginx --format='{{.State.ExitCode}}')"
           echo "Container logs:"
-          docker logs test-nginx 2>/dev/null || echo "No logs available"
-          docker rm -f test-nginx 2>/dev/null || true
+          docker logs test-nginx
+          docker rm test-nginx
           exit 1
         fi
         
-        # Wait longer for nginx to fully start
-        echo "Waiting for nginx to fully start..."
-        sleep 25
-        
-        # Check if container is still running
-        if ! docker ps | grep test-nginx; then
-          echo "❌ Container is not running"
-          echo "Container logs:"
-          docker logs test-nginx 2>/dev/null || echo "No logs available"
-          docker rm -f test-nginx 2>/dev/null || true
-          exit 1
-        fi
+        # Wait for container to be ready (healthcheck needs time)
+        echo "Waiting for nginx to start..."
+        for i in $(seq 1 12); do
+          sleep 5
+          STATUS=$(docker inspect test-nginx --format='{{.State.Status}}' 2>/dev/null || echo "gone")
+          echo "Check $i/12: Container status: $STATUS"
+          
+          if [ "$STATUS" = "exited" ]; then
+            echo "❌ Container exited during startup"
+            echo "Exit code: $(docker inspect test-nginx --format='{{.State.ExitCode}}')"
+            echo "Container logs:"
+            docker logs test-nginx
+            docker rm test-nginx
+            exit 1
+          elif [ "$STATUS" = "running" ]; then
+            echo "✅ Container is running"
+            break
+          fi
+          
+          if [ $i -eq 12 ]; then
+            echo "❌ Container did not start within 60 seconds"
+            echo "Final status: $STATUS"
+            echo "Container logs:"
+            docker logs test-nginx 2>/dev/null || echo "No logs available"
+            docker rm -f test-nginx 2>/dev/null || true
+            exit 1
+          fi
+        done
         
         # Test health check endpoint
         echo "Running health check..."
