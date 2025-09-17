@@ -85,30 +85,42 @@ jobs:
         echo "Testing image: $IMAGE_TAG"
         
         # Test that the image can start successfully
-        docker run --rm -d --name test-nginx \
+        echo "Starting container..."
+        CONTAINER_ID=$(docker run -d --name test-nginx \
           -e DOMAIN=test.example.com \
-          -e INTERNAL_MAIN_HOST=host.docker.internal \
-          -e INTERNAL_MAIN_PORT=8000 \
-          "$IMAGE_TAG"
+          -e INTERNAL_MAIN_HOST=httpbin.org \
+          -e INTERNAL_MAIN_PORT=80 \
+          "$IMAGE_TAG")
+        
+        echo "Container ID: $CONTAINER_ID"
         
         # Wait for container to be ready (healthcheck needs time)
-        echo "Waiting for container to be ready..."
-        sleep 30
+        echo "Waiting for container to start..."
+        sleep 5
         
-        # Check if container is running
-        if ! docker ps | grep test-nginx; then
-          echo "❌ Container failed to start"
-          docker logs test-nginx
+        # Check if container started and get status
+        CONTAINER_STATUS=$(docker inspect test-nginx --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
+        echo "Container status: $CONTAINER_STATUS"
+        
+        # If container exited, show logs and exit
+        if [ "$CONTAINER_STATUS" = "exited" ] || [ "$CONTAINER_STATUS" = "not_found" ]; then
+          echo "❌ Container failed to start or exited early"
+          echo "Container logs:"
+          docker logs test-nginx 2>/dev/null || echo "No logs available"
+          docker rm -f test-nginx 2>/dev/null || true
           exit 1
         fi
         
-        # Check container status
-        CONTAINER_STATUS=$(docker inspect test-nginx --format='{{.State.Status}}')
-        echo "Container status: $CONTAINER_STATUS"
+        # Wait longer for nginx to fully start
+        echo "Waiting for nginx to fully start..."
+        sleep 25
         
-        if [ "$CONTAINER_STATUS" != "running" ]; then
+        # Check if container is still running
+        if ! docker ps | grep test-nginx; then
           echo "❌ Container is not running"
-          docker logs test-nginx
+          echo "Container logs:"
+          docker logs test-nginx 2>/dev/null || echo "No logs available"
+          docker rm -f test-nginx 2>/dev/null || true
           exit 1
         fi
         
@@ -116,27 +128,41 @@ jobs:
         echo "Running health check..."
         if ! docker exec test-nginx /usr/local/bin/healthcheck.sh; then
           echo "❌ Health check failed"
+          echo "Container logs:"
           docker logs test-nginx
+          docker rm -f test-nginx 2>/dev/null || true
           exit 1
         fi
         
         # Test HTTP redirect (should get redirect response)
         echo "Testing HTTP redirect..."
-        if ! docker exec test-nginx curl -s -o /dev/null -w "%{http_code}" http://localhost:80/ | grep -q "301"; then
-          echo "❌ HTTP redirect test failed"
+        HTTP_CODE=$(docker exec test-nginx curl -s -o /dev/null -w "%{http_code}" http://localhost:80/ 2>/dev/null || echo "000")
+        echo "HTTP response code: $HTTP_CODE"
+        if [ "$HTTP_CODE" != "301" ]; then
+          echo "❌ HTTP redirect test failed (expected 301, got $HTTP_CODE)"
+          echo "Container logs:"
           docker logs test-nginx
+          docker rm -f test-nginx 2>/dev/null || true
           exit 1
         fi
         
-        # Test HTTPS response (should get some response)
+        # Test HTTPS response (should get some response from httpbin.org)
         echo "Testing HTTPS response..."
-        if ! docker exec test-nginx curl -k -s -o /dev/null -w "%{http_code}" https://localhost:443/ | grep -q "502\|503\|200"; then
-          echo "❌ HTTPS response test failed"
+        HTTPS_CODE=$(docker exec test-nginx curl -k -s -o /dev/null -w "%{http_code}" https://localhost:443/ 2>/dev/null || echo "000")
+        echo "HTTPS response code: $HTTPS_CODE"
+        if ! echo "$HTTPS_CODE" | grep -qE "^(200|502|503|504)$"; then
+          echo "❌ HTTPS response test failed (expected 200/502/503/504, got $HTTPS_CODE)"
+          echo "Trying to test actual proxy to httpbin.org..."
+          docker exec test-nginx curl -k -s -I https://localhost:443/ || true
+          echo "Container logs:"
           docker logs test-nginx
+          docker rm -f test-nginx 2>/dev/null || true
           exit 1
         fi
         
         # Cleanup
+        echo "Cleaning up..."
         docker stop test-nginx
+        docker rm test-nginx
         
         echo "✅ Docker image test passed!"
