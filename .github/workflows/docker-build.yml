@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build, Test, and Push Docker Image
 
 on:
   release:
@@ -57,31 +57,29 @@ jobs:
           org.opencontainers.image.vendor=${{ github.repository_owner }}
           org.opencontainers.image.licenses=MIT
 
-    - name: Build and push Docker image
+    - name: Build Docker image for testing
       uses: docker/build-push-action@v5
       with:
         context: .
         file: ./Dockerfile
-        platforms: linux/amd64,linux/arm64
-        push: ${{ github.event.inputs.push_to_registry != 'false' }}
-        tags: ${{ steps.meta.outputs.tags }}
+        platforms: linux/amd64
+        push: false
+        load: true
+        tags: test-image:latest
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
-        cache-to: type=gha,mode=max
         build-args: |
           BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
           VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
           REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
-        build-args: |
           BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
           VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
           REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
 
     - name: Test Docker image
-      if: steps.meta.outputs.tags
       run: |
-        # Get the first tag from the built image
-        IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+        # Test the locally built image
+        IMAGE_TAG="test-image:latest"
         echo "Testing image: $IMAGE_TAG"
         
         # First, test if the image can run a simple command
@@ -197,3 +195,33 @@ jobs:
         docker rm test-nginx
         
         echo "✅ Docker image test passed!"
+
+    - name: Build and push Docker image
+      if: ${{ github.event.inputs.push_to_registry != 'false' }}
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+          REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+
+    - name: Build summary
+      run: |
+        echo "🎉 Build completed successfully!"
+        echo "📦 Built and tested image: test-image:latest"
+        if [[ "${{ github.event.inputs.push_to_registry }}" != "false" ]]; then
+          echo "🚀 Pushed to registry with tags:"
+          echo "${{ steps.meta.outputs.tags }}" | while read tag; do
+            echo "  - $tag"
+          done
+        else
+          echo "⏸️  Image was built and tested but not pushed to registry"
+        fi
