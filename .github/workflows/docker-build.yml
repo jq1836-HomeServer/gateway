@@ -63,7 +63,7 @@ jobs:
         context: .
         file: ./Dockerfile
         platforms: linux/amd64,linux/arm64
-        push: ${{ github.event_name != 'pull_request' && (github.event.inputs.push_to_registry != 'false') }}
+        push: ${{ github.event.inputs.push_to_registry != 'false' }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
@@ -72,30 +72,66 @@ jobs:
           BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
           VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
           REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+        build-args: |
+          BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+          REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
 
     - name: Test Docker image
       if: steps.meta.outputs.tags
       run: |
+        # Get the first tag from the built image
+        IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+        echo "Testing image: $IMAGE_TAG"
+        
         # Test that the image can start successfully
         docker run --rm -d --name test-nginx \
           -e DOMAIN=test.example.com \
-          -e INTERNAL_MAIN_HOST=localhost \
+          -e INTERNAL_MAIN_HOST=host.docker.internal \
           -e INTERNAL_MAIN_PORT=8000 \
-          ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+          "$IMAGE_TAG"
         
-        # Wait for container to be ready
-        sleep 10
+        # Wait for container to be ready (healthcheck needs time)
+        echo "Waiting for container to be ready..."
+        sleep 30
         
         # Check if container is running
         if ! docker ps | grep test-nginx; then
-          echo "Container failed to start"
+          echo "❌ Container failed to start"
+          docker logs test-nginx
+          exit 1
+        fi
+        
+        # Check container status
+        CONTAINER_STATUS=$(docker inspect test-nginx --format='{{.State.Status}}')
+        echo "Container status: $CONTAINER_STATUS"
+        
+        if [ "$CONTAINER_STATUS" != "running" ]; then
+          echo "❌ Container is not running"
           docker logs test-nginx
           exit 1
         fi
         
         # Test health check endpoint
+        echo "Running health check..."
         if ! docker exec test-nginx /usr/local/bin/healthcheck.sh; then
-          echo "Health check failed"
+          echo "❌ Health check failed"
+          docker logs test-nginx
+          exit 1
+        fi
+        
+        # Test HTTP redirect (should get redirect response)
+        echo "Testing HTTP redirect..."
+        if ! docker exec test-nginx curl -s -o /dev/null -w "%{http_code}" http://localhost:80/ | grep -q "301"; then
+          echo "❌ HTTP redirect test failed"
+          docker logs test-nginx
+          exit 1
+        fi
+        
+        # Test HTTPS response (should get some response)
+        echo "Testing HTTPS response..."
+        if ! docker exec test-nginx curl -k -s -o /dev/null -w "%{http_code}" https://localhost:443/ | grep -q "502\|503\|200"; then
+          echo "❌ HTTPS response test failed"
           docker logs test-nginx
           exit 1
         fi
@@ -104,12 +140,3 @@ jobs:
         docker stop test-nginx
         
         echo "✅ Docker image test passed!"
-
-    - name: Update Docker Hub description
-      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-      uses: peter-evans/dockerhub-description@v3
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
-        repository: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
-        readme-filepath: ./README.md
