@@ -49,7 +49,7 @@ server {
     # Example: Proxy to internal web application
     location /app/ {
         # Apply rate limiting
-        limit_req zone=general burst=${RATE_LIMIT_GENERAL_BURST:-20} nodelay;
+        limit_req zone=general burst=${RATE_LIMIT_GENERAL_BURST} nodelay;
         
         # Proxy to internal HTTP service (HTTPS -> HTTP downgrade)
         proxy_pass http://${INTERNAL_APP_HOST}:${INTERNAL_APP_PORT}/;
@@ -61,7 +61,7 @@ server {
     # Example: Proxy to API service
     location /api/ {
         # Apply rate limiting
-        limit_req zone=api burst=${RATE_LIMIT_API_BURST:-10} nodelay;
+        limit_req zone=api burst=${RATE_LIMIT_API_BURST} nodelay;
         
         # Proxy to internal HTTP API service
         proxy_pass http://${INTERNAL_API_HOST}:${INTERNAL_API_PORT}/;
@@ -73,7 +73,7 @@ server {
     # Example: Proxy to authentication service
     location /auth/ {
         # Apply stricter rate limiting for auth endpoints
-        limit_req zone=login burst=${RATE_LIMIT_LOGIN_BURST:-5} nodelay;
+        limit_req zone=login burst=${RATE_LIMIT_LOGIN_BURST} nodelay;
         
         # Proxy to internal HTTP auth service
         proxy_pass http://${INTERNAL_AUTH_HOST}:${INTERNAL_AUTH_PORT}/;
@@ -82,7 +82,7 @@ server {
     # Example: WebSocket proxy
     location /ws/ {
         # Apply WebSocket rate limiting
-        limit_req zone=websocket burst=${RATE_LIMIT_WEBSOCKET_BURST:-3} nodelay;
+        limit_req zone=websocket burst=${RATE_LIMIT_WEBSOCKET_BURST} nodelay;
         
         # Proxy to internal WebSocket service (HTTP)
         proxy_pass http://${INTERNAL_WEBSOCKET_HOST}:${INTERNAL_WEBSOCKET_PORT}/;
@@ -96,13 +96,13 @@ server {
     # Example: File upload endpoint
     location /upload/ {
         # Apply upload rate limiting
-        limit_req zone=upload burst=${RATE_LIMIT_UPLOAD_BURST:-1} nodelay;
+        limit_req zone=upload burst=${RATE_LIMIT_UPLOAD_BURST} nodelay;
         
         # Set client body size limit
-        client_max_body_size ${UPLOAD_MAX_SIZE:-100M};
+        client_max_body_size ${UPLOAD_MAX_SIZE};
         
         # Proxy to upload service
-        proxy_pass http://${INTERNAL_UPLOAD_HOST:-${INTERNAL_MAIN_HOST}}:${INTERNAL_UPLOAD_PORT:-${INTERNAL_MAIN_PORT}}/upload/;
+        proxy_pass http://${INTERNAL_UPLOAD_HOST}:${INTERNAL_UPLOAD_PORT}/upload/;
     }
     
     # Health check endpoint
@@ -115,7 +115,7 @@ server {
     # Default location for static files or main application
     location / {
         # Apply rate limiting
-        limit_req zone=general burst=${RATE_LIMIT_GENERAL_BURST:-20} nodelay;
+        limit_req zone=general burst=${RATE_LIMIT_GENERAL_BURST} nodelay;
         
         # Proxy to main internal HTTP service
         proxy_pass http://${INTERNAL_MAIN_HOST}:${INTERNAL_MAIN_PORT}/;
@@ -151,7 +151,7 @@ server {
     
     # API-specific configuration
     location / {
-        limit_req zone=api burst=${RATE_LIMIT_API_BURST:-50} nodelay;
+        limit_req zone=api burst=${RATE_LIMIT_API_BURST} nodelay;
         
         # Proxy to internal HTTP API service
         proxy_pass http://${INTERNAL_API_HOST}:${INTERNAL_API_PORT}/;
