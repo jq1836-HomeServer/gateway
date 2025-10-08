@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for Nginx Reverse Proxy Gateway
-FROM nginx:alpine as base
+FROM nginx:1.29.2-alpine as base
 
 # Install necessary packages for SSL and template processing
 RUN apk add --no-cache \
